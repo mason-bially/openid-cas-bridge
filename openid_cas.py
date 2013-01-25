@@ -6,7 +6,7 @@ import urllib; import urllib2
 from xml.dom.minidom import parseString
 #TODO: Document!
 
-thisUrl = "http://sw.cs.wwu.edu/~biallym/cgi-bin/hello.py"
+thisUrl = "http://sw.cs.wwu.edu/~biallym/cgi-bin/openid_cas.py"
 casUrl = "https://websso.wwu.edu/cas"
 
 def getPath():
@@ -53,21 +53,25 @@ def CASvalidate(ticket):
     return {'uname': getText(tree.getElementsByTagName("cas:user")[0]),
             'wid': getText(tree.getElementsByTagName("cas:wid")[0])}
 
+#The form data
 form = cgi.FieldStorage()
+path = getPath()
 
-if form.has_key('user'): #Rewritten openid request
-    redirect(casUrl + "/login", {'service': thisUrl, 'BLARGH': '77'});
-elif form.has_key('ticket'):
-    print "Content-Type: text/html\n\n"
-    print CASvalidate(form['ticket'].value)['uname']
-    print "BLARGHs!"
+if len(path) == 1: #Cas request wrapper
+    if form.has_key('ticket'): #Cas request return
+        print "Content-Type: text/html\n\n"
+        print CASvalidate(form['ticket'].value)['uname']
+        print "BLARGHs!"
+    else: #Do cas request
+        redirect(buildPath(casUrl, ["login"]), {'service': buildPath(thisUrl, path)})
+
 else:
     print "Content-Type: text/html\n\n"
     print """\
     <html>
-    <head><title>First Python HTTP Programming </title></head>
+    <head><title>OpenId-Cas-Bridge</title></head>
     <body>
-    <h2>Hello World!</h2>
+    <h2>...</h2>
     </body>
     </html>
     """
