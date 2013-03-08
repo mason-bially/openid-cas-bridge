@@ -165,28 +165,48 @@ def openid_generate_assertion_nonce(nonce):
     utctime = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     return utctime + cfg_nonce_constant + nonce + str(datetime.datetime.now().microsecond)
 
-def openid_signing_keys(d):
+def openid_list_signing_keys(d):
     """Returns the list of openid keys in the given object to sign."""
     # http://openid.net/specs/openid-authentication-2_0.html#generating_signatures
     return ["op_endpoint","identity","claimed_id","return_to","assoc_handle","response_nonce"]
 
 def openid_sign(d):
     """Signs the given dictionary, inserting the result into the dictionary and returning it."""
-    signed_list = openid_signing_keys(d)
+    signing_list = openid_list_signing_keys(d)
     # http://openid.net/specs/openid-authentication-2_0.html#kvform
-    tosign = str(unichr(10)).join(map(lambda s: s + ":" + d["openid."+s], signed_list))
+    to_sign = str(unichr(10)).join(map(lambda s: s + ":" + d["openid."+s], signing_list))
     
-    m = SHA256.new()
-    m.update(tosign)
+    hash_algo = SHA256.new()
+    hash_algo.update(to_sign)
 
-    d['openid.signed'] = ','.join(signed_list)
-    d['openid.sig'] = base64.b64encode(m.digest(), "-_")
+    d['openid.signed'] = ','.join(signing_list)
+    d['openid.sig'] = base64.b64encode(hash_algo.digest(), "-_")
 
     return d
 
-def generate_data(ident, rep_nonce):
-    """Generates the assoc handle data."""
-    return (ident + rep_nonce + cfg_this_url + ("pad!"*62))[:((255*6)/8) + 1] # Gaurntee size constraints
+def openid_truncate_assoc_handle_data(data):
+    """Generates data for creating encrypted assoc handle, uses a list of values."""
+    return ("".join(data) + ("pad!"*62))[:((255*6)/8) + 1] # Gaurntee size constraints
+
+def openid_generate_assoc_handle(key, iv, data):
+    """Generates an assoc handle by encrypting the given data using the given key and iv."""
+    #init blowfish
+    blowfish = Blowfish.new(key[:56], Blowfish.MODE_CBC, iv[:8])
+    #truncate data
+    truncated_data = openid_truncate_assoc_handle_data(data)
+    #return 'url base64' of the encrypted data
+    return base64.b64encode(blowfish.encrypt(truncated_data), "-_")
+
+def openid_test_assoc_handle(key, iv, data, handle):
+    """Tests a given assoc handle by decrpyting it using the given key and iv and comparing it to the given data."""
+    #init blowfish
+    blowfish = Blowfish.new(key[:56], Blowfish.MODE_CBC, iv[:8])
+    #decrypt the decoded 'url base64' data
+    response_assoc_data = blowfish.decrypt(base64.b64decode(handle, "-_"))
+    #generate our version of the data
+    our_assoc_data = openid_truncate_assoc_handle_data(data)
+    #test
+    return (response_assoc_data == our_assoc_data)
 
 def do_direct(d):
     """Does a direct OpenId response."""
@@ -202,19 +222,16 @@ def do_direct_validate(form):
     rep_nonce = form['openid.response_nonce'].value
     openid_return_to = form['openid.return_to'].value
 
-    test_data = generate_data(ident, rep_nonce)
-    b = Blowfish.new(key[:56], Blowfish.MODE_CBC, openid_return_to[:8])
-    d_assoc = b.decrypt(base64.b64decode(form['openid.assoc_handle'].value, "-_"))
+    assoc_valid = openid_test_assoc_handle(key, openid_return_to, [ident, rep_nonce, cfg_this_url], form['openid.assoc_handle'].value)
 
-    kl = openid_signing_keys(form)
-    d = {('openid.' + nk): form['openid.' + nk].value for nk in kl }
+    d = {key: form[key].value for key in form.keys() }
 
     signed_d = openid_sign(d)
 
     response = {'openid.ns': "http://specs.openid.net/auth/2.0",
              'openid.is_valid': "false"}
 
-    if d_assoc == test_data and signed_d['openid.sig'] == form['openid.sig'].value:
+    if assoc_valid and signed_d['openid.sig'] == form['openid.sig'].value:
         response['openid.is_valid'] = "true"
         if form.has_key('openid.invalidate_handle'):
             response['openid.invalidate_handle'] = form['openid.invalidate_handle'].value
@@ -228,8 +245,7 @@ def redirect_openid_positive(openid_return_to, uname, nonce, old_assoc):
     key = str(ident) + cfg_assoc_encrypt_key
     rep_nonce = openid_generate_assertion_nonce(nonce)
 
-    b = Blowfish.new(key[:56], Blowfish.MODE_CBC, openid_return_to[:8])
-    assoc = base64.b64encode(b.encrypt(generate_data(ident, rep_nonce)), "-_")
+    assoc = openid_generate_assoc_handle(key, openid_return_to, [ident, rep_nonce, cfg_this_url])
 
     d = {'openid.ns': "http://specs.openid.net/auth/2.0",
          'openid.mode': "id_res",
