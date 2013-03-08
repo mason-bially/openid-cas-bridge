@@ -22,6 +22,7 @@ casUrl = "https://websso.wwu.edu/cas"
 title = "OpenId-Cas-Bridge"
 logFile = "/tmp/zBIRDS.log"
 secret = "TH3 BiRbS A5E T4STY!THIS~TIME 000F YeaR%"
+nonceConstant = "BIRDS"
 ### End config
 
 ### Logging
@@ -50,24 +51,13 @@ def log(msg):
         f.write(str(msg) + "\n")
 ### End logging
 
-
-def html_header():
-    return "Content-Type: text/html\n\n<html>"
-
+### HTTP Helpers ###
 def getPath(url=None):
     """Returns the path folowing the cgi script as a list"""
     if url is None:
         url = os.environ.get('PATH_INFO', '')
     list_path = url.split('/')
     return (list_path)[1:]
-
-def getText(rnode):
-    """Extracts text from a minidom element"""
-    rc = []
-    for node in rnode.childNodes:
-        if node.nodeType == node.TEXT_NODE:
-            rc.append(node.data)
-    return ''.join(rc)
 
 def buildGet(query):
     """Builds a get query string from a dictionary"""
@@ -81,6 +71,11 @@ def buildPath(root, path_list):
     queryString = root[:]
     queryString += ("/".join([''] + path_list))
     return queryString
+### End HTTP Helpers ###
+
+### Headers/HTTP types ###
+def html_header():
+    return "Content-Type: text/html\n\n<html>"
 
 def redirect(loc, query=None):
     """Performs a redirect"""
@@ -93,6 +88,24 @@ def redirect(loc, query=None):
         q += buildGet(query)
     sys.stdout.write("Location: " + loc + q + "\n\n");
     exit()
+### End Headers/HTTP types ###
+
+### OpenId Headers ###
+def openid_provider_head_html(provider):
+    return """<link rel="openid2.provider" href="%s">""" % (provider,)
+
+def openid_localid_head_html(localid):
+    return """<link rel="openid2.local_id" href="%s">""" % (localid,)
+### End OpenId Headers ###
+
+### Cas Helpers ###
+def getText(rnode):
+    """Extracts text from a minidom element"""
+    rc = []
+    for node in rnode.childNodes:
+        if node.nodeType == node.TEXT_NODE:
+            rc.append(node.data)
+    return ''.join(rc)
 
 def CASvalidate(ticket, service):
     """Validates against cas using a ticket, returns a dictionary of wid and username"""
@@ -113,31 +126,32 @@ def CASvalidate(ticket, service):
     return {'uname': getText(uname_nodes[0]),
             'wid': getText(wid_nodes[0])}
 
-def openid_provider_head_html(provider):
-    return """<link rel="openid2.provider" href="%s">""" % (provider,)
+def build_service_url(uname, openid_return_to):
+    """Builds the service link used by CAS for this page."""
+    return buildPath(thisUrl, [uname]) + "?" + buildGet({'openid.return_to': openid_return_to})
+### End Cas Helpers ###
 
-def openid_localid_head_html(localid):
-    return """<link rel="openid2.local_id" href="%s">""" % (localid,)
-
+### Other Headers ###
 def head_html(title, provider=None, localid=None):
     return """<head><title>%s</title>%s%s</head>""" \
         % (title,
             openid_provider_head_html(provider) if provider is not None else "",
             openid_localid_head_html(localid) if localid is not None else "")
+### End Other Headers ###
 
+### OpenId Protocol ###
 def response_nonce(nonce):
+    """OpenId response nonce."""
     utctime = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    return utctime + "BIRDS" + nonce
-
-def build_service_url(uname, openid_return_to):
-    """Builds the service link"""
-    return buildPath(thisUrl, [uname]) + "?" + buildGet({'openid.return_to': openid_return_to})
+    return utctime + nonceConstant + nonce
 
 def openid_signing_keys(d):
+    """Returns the list of openid keys in the given object to sign."""
     # http://openid.net/specs/openid-authentication-2_0.html#generating_signatures
     return ["op_endpoint","identity","claimed_id","return_to","assoc_handle","response_nonce"]
 
 def openid_sign(d):
+    """Signs the given dictionary, inserting the result into the dictionary and returning it."""
     signed_list = openid_signing_keys(d)
     # http://openid.net/specs/openid-authentication-2_0.html#kvform
     tosign = str(unichr(10)).join(map(lambda s: s + ":" + d["openid."+s], signed_list))
@@ -151,15 +165,18 @@ def openid_sign(d):
     return d
 
 def generate_data(ident, rep_nonce):
+    """Generates the assoc handle data."""
     return (ident + rep_nonce + thisUrl + ("pad!"*62))[:((255*6)/8) + 1] # Gaurntee size constraints
 
 def do_direct(d):
+    """Does a direct OpenId response."""
     sys.stdout.write("Content-Type: text/plain\n\n")
     for k,v in d.items():
         sys.stdout.write("%s:%s\n" % (k[7:], v))
     exit()
 
 def do_direct_validate(form):
+    """Performs direct OpenId validation on a given request."""
     ident = form['openid.identity'].value
     key = str(ident) + secret
     rep_nonce = form['openid.response_nonce'].value
@@ -184,7 +201,9 @@ def do_direct_validate(form):
 
     do_direct(response)
 
+
 def redirect_openid_positive(openid_return_to, uname, nonce, old_assoc):
+    """Performs an indirect OpenId possitve assertion on a given request."""
     ident = buildPath(thisUrl, [uname])
     key = str(ident) + secret
     rep_nonce = response_nonce(nonce)
@@ -206,16 +225,21 @@ def redirect_openid_positive(openid_return_to, uname, nonce, old_assoc):
     signed_d = openid_sign(d)
     log(str(signed_d))
     redirect(openid_return_to, signed_d)
+### End OpenId Protocol ###
 
-#The form data
+### The form data
 form = cgi.FieldStorage()
 path = getPath()
 
 try:
     #TODO: Ensure HTTPS
 ### Core logic
-    if len(path) == 1: #ID request wrapper
-        if form.has_key('ticket') and form.has_key('openid.return_to'): #Cas request return
+
+    # OpenId token wrapper
+    if len(path) == 1:
+
+        # CAS request return / OpenId Indirect Positive Assertion
+        if form.has_key('ticket') and form.has_key('openid.return_to'):
             supposed_uname = path[0]
             log("Authenticating: %s" % (supposed_uname,))
 
@@ -242,16 +266,20 @@ try:
             </html>
             """ % (supposed_uname, cas_result))
             exit()
-                
-        elif len(form.keys()) == 0: #Do open id redirect
+
+        # Do OpenId redirect
+        elif len(form.keys()) == 0:
             sys.stdout.write(html_header())
             sys.stdout.write(head_html(title, thisUrl, buildPath(thisUrl, path)))
+
+        # Unkown
         else:
             log_important("Unknown key combination for wrapper.")
             log_all()
             sys.stdout.write(html_header())
             sys.stdout.write(head_html(title))
-        # Print common landing page
+
+        # Common
         sys.stdout.write("""\
         <body>
         <h2>OpenId-Cas-Bridge</h2><br />
@@ -261,17 +289,24 @@ try:
         """)
         exit()
 
-    else: #open id provider
+    # OpenId provider
+    else:
+
+        # CAS Redirect
         if form.has_key("openid.mode") and form["openid.mode"].value == "checkid_setup" and \
            form.has_key("openid.claimed_id") and form.has_key("openid.return_to"):
             uname = getPath(form['openid.claimed_id'].value)[-1]
             log_all()
             redirect(buildPath(casUrl, ["login"]), 
                 {'service':  build_service_url(uname, form['openid.return_to'].value)})
-        if form.has_key("openid.mode") and form["openid.mode"].value == "check_authentication":
+
+        # Validate Indirect Response
+        elif form.has_key("openid.mode") and form["openid.mode"].value == "check_authentication":
             log("Asked for validation")
             log_all()
             do_direct_validate(form)
+
+        # Landing Page.
         else:
             sys.stdout.write(html_header())
             sys.stdout.write(head_html(title))
@@ -282,6 +317,8 @@ try:
             </html>
             """)
             exit()
+
+# Exception printing.
 except Exception as e:
     log_exception()
     sys.stdout.write(html_header())
