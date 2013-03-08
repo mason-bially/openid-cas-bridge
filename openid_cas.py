@@ -93,21 +93,41 @@ def buildPath(root, path_list):
     return queryString
 ### End HTTP Helpers ###
 
-### Headers/HTTP types ###
-def html_header():
-    return "Content-Type: text/html\n\n<html>"
 
-def redirect(loc, query=None):
-    """Performs a redirect"""
+### Final functions ###
+def final_redirect(location, query=None):
+    """Performs a redirect as the final action of the script. Redirects to the given location using the optional query dictionary."""
     q = ""
     if query is not None:
-        if string.find(loc, "?") == -1:
+        if string.find(location, "?") == -1:
             q += "?"
         else:
             q += "&"
         q += buildGet(query)
-    sys.stdout.write("Location: " + loc + q + "\n\n");
+    sys.stdout.write("Location: " + location + q + "\n\n");
     exit()
+
+def final_direct_response(data):
+    """Does a direct OpenId key/value response. Using the dictionary data to generate the keys and values."""
+    sys.stdout.write("Content-Type: text/plain\n\n")
+    for k,v in data.items():
+        sys.stdout.write("%s:%s\n" % (k[7:], v)) #the 7 here cuts the 'openid.' off of the keys.
+    exit()
+
+def final_html_display(body = ""):
+    """Outputs an html display with the optional html text in the body."""
+    sys.stdout.write("""
+    <body><h2>%s</h2>
+    %s
+    </body></html>
+    """ % (cfg_title, body))
+    exit()
+### End Final Functions ###
+
+
+### Headers/HTTP types ###
+def html_header():
+    return "Content-Type: text/html\n\n<html>"
 ### End Headers/HTTP types ###
 
 ### OpenId Headers ###
@@ -208,12 +228,7 @@ def openid_test_assoc_handle(key, iv, data, handle):
     #test
     return (response_assoc_data == our_assoc_data)
 
-def do_direct(d):
-    """Does a direct OpenId response."""
-    sys.stdout.write("Content-Type: text/plain\n\n")
-    for k,v in d.items():
-        sys.stdout.write("%s:%s\n" % (k[7:], v))
-    exit()
+
 
 def do_direct_validate(form):
     """Performs direct OpenId validation on a given request."""
@@ -236,7 +251,7 @@ def do_direct_validate(form):
         if form.has_key('openid.invalidate_handle'):
             response['openid.invalidate_handle'] = form['openid.invalidate_handle'].value
 
-    do_direct(response)
+    final_direct_response(response)
 
 
 def redirect_openid_positive(openid_return_to, uname, nonce, old_assoc):
@@ -260,7 +275,7 @@ def redirect_openid_positive(openid_return_to, uname, nonce, old_assoc):
 
     signed_d = openid_sign(d)
     log(str(signed_d))
-    redirect(openid_return_to, signed_d)
+    final_redirect(openid_return_to, signed_d)
 ### End OpenId Protocol ###
 
 ### The form data
@@ -294,14 +309,9 @@ try:
 
             sys.stdout.write(html_header())
             sys.stdout.write(head_html(cfg_title, cfg_this_url, buildPath(cfg_this_url, path)))
-            sys.stdout.write("""\
-            <body>
-            <h2>Authentication failed.</h2><br />
-            <h3>%s is not in %s</h3>
-            </body>
-            </html>
-            """ % (supposed_uname, cas_result))
-            exit()
+            final_html_display("""<br />
+            <h3>Authentication failed.</h3><br />
+            <p>%s is not in %s</p>""" % (supposed_uname, cas_result))
 
         # Do OpenId redirect
         elif len(form.keys()) == 0:
@@ -316,14 +326,7 @@ try:
             sys.stdout.write(head_html(cfg_title))
 
         # Common
-        sys.stdout.write("""\
-        <body>
-        <h2>OpenId-Cas-Bridge</h2><br />
-        <h3>Biallym</h3>
-        </body>
-        </html>
-        """)
-        exit()
+        final_html_display("<p>%s</p>" % (path[0],))
 
     # OpenId provider
     else:
@@ -333,7 +336,7 @@ try:
            form.has_key("openid.claimed_id") and form.has_key("openid.return_to"):
             uname = getPath(form['openid.claimed_id'].value)[-1]
             log_all()
-            redirect(buildPath(cfg_cas_url, ["login"]), 
+            final_redirect(buildPath(cfg_cas_url, ["login"]), 
                 {'service':  build_service_url(uname, form['openid.return_to'].value)})
 
         # Validate Indirect Response
@@ -346,23 +349,12 @@ try:
         else:
             sys.stdout.write(html_header())
             sys.stdout.write(head_html(cfg_title))
-            sys.stdout.write("""\
-            <body>
-            <h2>OpenId-Cas-Bridge</h2>
-            </body>
-            </html>
-            """)
-            exit()
+            final_html_display()
 
 # Exception printing.
 except Exception as e:
     log_exception()
     sys.stdout.write(html_header())
     sys.stdout.write(head_html(cfg_title))
-    sys.stdout.write("""\
-    <body>
-    <h2>OpenId-Cas-Bridge</h2>
-    <p>Error!</p>
-    </body>
-    </html>
-    """)
+    final_html_display("<p>Error!</p>")
+
