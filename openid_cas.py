@@ -1,55 +1,74 @@
 #!/usr/bin/env python
 
-import sys
-import os
-import time
+### Config ###
+
+# URL of this file.
+cfg_this_url = "http://fugiera-l.cs.wwu.edu/mason/cgi-bin/openid_cas.py"
+
+# URL of the CAS Provider.
+cfg_cas_url = "https://websso.wwu.edu/cas"
+
+# Title of the landing page.
+cfg_title = "OpenId-Cas-Bridge"
+
+# The filename to log to.
+cfg_log_filename = "/tmp/zBIRDS.log"
+
+# The encryption key used to encrypt the assoc handle statelss data.
+cfg_assoc_encrypt_key = "TH3 BiRbS A5E T4STY!THIS~TIME 000F YeaR%"
+
+# A constant to add to the nonce.
+cfg_nonce_constant = "BIRDS"
+
+### End config ###
+
+
+### Libraries ###
+
+## Python libs
+import sys, os
+import time, string, base64
 import traceback
-import cgi
-import cgitb; cgitb.enable()
+import cgi, cgitb; cgitb.enable()
 import urllib; import urllib2
 from xml.dom.minidom import parseString
-import string
-import hashlib
-import base64
 
+## PyCrypto libs
 from Crypto.Cipher import Blowfish
 from Crypto.Hash import SHA256
-#TODO: Document!
+### End Libraries ###
 
-### Config:
-thisUrl = "http://fugiera-l.cs.wwu.edu/mason/cgi-bin/openid_cas.py"
-casUrl = "https://websso.wwu.edu/cas"
-title = "OpenId-Cas-Bridge"
-logFile = "/tmp/zBIRDS.log"
-secret = "TH3 BiRbS A5E T4STY!THIS~TIME 000F YeaR%"
-nonceConstant = "BIRDS"
-### End config
 
-### Logging
+### Logging ###
 def log_all():
-    with open(logFile, "a") as f:
+    """Logs the entire request."""
+    with open(cfg_log_filename, "a") as f:
         f.write(str(time.ctime())+"\n")
         f.write(str(path) + "\n")
         f.write("Keys:    " + str(form.keys()) + "\n")
         f.write("Headers: " + str(form.headers) + "\n")
         f.write("List:    " + str(form.list) + "\n")
         f.write("Type:    " + str(form.type) + "\n")
-    os.chmod(logFile, 0777)
+    os.chmod(cfg_log_filename, 0777)
 
 def log_important(msg):
-    with open(logFile, "a") as f:
+    """Logs a message and adds a large header."""
+    with open(cfg_log_filename, "a") as f:
         f.write("*" * 20 + "\n")
         f.write(str(msg) + "\n")
 
 def log_exception():
+    """Prints out the current exception with traceback. Must be called in an except block."""
     exc_type, exc_value, exc_traceback = sys.exc_info()
-    with open(logFile, "a") as f:
+    with open(cfg_log_filename, "a") as f:
         traceback.print_exception(exc_type, exc_value, exc_traceback, file=f)
 
 def log(msg):
-    with open(logFile, "a") as f:
+    """Prints a message to the log."""
+    with open(cfg_log_filename, "a") as f:
         f.write(str(msg) + "\n")
-### End logging
+### End logging ###
+
 
 ### HTTP Helpers ###
 def getPath(url=None):
@@ -109,7 +128,7 @@ def getText(rnode):
 
 def CASvalidate(ticket, service):
     """Validates against cas using a ticket, returns a dictionary of wid and username"""
-    address = buildPath(casUrl, ["serviceValidate"])
+    address = buildPath(cfg_cas_url, ["serviceValidate"])
     values ={'service': service,
              'ticket': ticket}
     data = urllib.urlencode(values)
@@ -128,7 +147,7 @@ def CASvalidate(ticket, service):
 
 def build_service_url(uname, openid_return_to):
     """Builds the service link used by CAS for this page."""
-    return buildPath(thisUrl, [uname]) + "?" + buildGet({'openid.return_to': openid_return_to})
+    return buildPath(cfg_this_url, [uname]) + "?" + buildGet({'openid.return_to': openid_return_to})
 ### End Cas Helpers ###
 
 ### Other Headers ###
@@ -143,7 +162,7 @@ def head_html(title, provider=None, localid=None):
 def response_nonce(nonce):
     """OpenId response nonce."""
     utctime = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    return utctime + nonceConstant + nonce
+    return utctime + cfg_nonce_constant + nonce
 
 def openid_signing_keys(d):
     """Returns the list of openid keys in the given object to sign."""
@@ -166,7 +185,7 @@ def openid_sign(d):
 
 def generate_data(ident, rep_nonce):
     """Generates the assoc handle data."""
-    return (ident + rep_nonce + thisUrl + ("pad!"*62))[:((255*6)/8) + 1] # Gaurntee size constraints
+    return (ident + rep_nonce + cfg_this_url + ("pad!"*62))[:((255*6)/8) + 1] # Gaurntee size constraints
 
 def do_direct(d):
     """Does a direct OpenId response."""
@@ -178,7 +197,7 @@ def do_direct(d):
 def do_direct_validate(form):
     """Performs direct OpenId validation on a given request."""
     ident = form['openid.identity'].value
-    key = str(ident) + secret
+    key = str(ident) + cfg_assoc_encrypt_key
     rep_nonce = form['openid.response_nonce'].value
     openid_return_to = form['openid.return_to'].value
 
@@ -204,8 +223,8 @@ def do_direct_validate(form):
 
 def redirect_openid_positive(openid_return_to, uname, nonce, old_assoc):
     """Performs an indirect OpenId possitve assertion on a given request."""
-    ident = buildPath(thisUrl, [uname])
-    key = str(ident) + secret
+    ident = buildPath(cfg_this_url, [uname])
+    key = str(ident) + cfg_assoc_encrypt_key
     rep_nonce = response_nonce(nonce)
 
     b = Blowfish.new(key[:56], Blowfish.MODE_CBC, openid_return_to[:8])
@@ -215,7 +234,7 @@ def redirect_openid_positive(openid_return_to, uname, nonce, old_assoc):
          'openid.mode': "id_res",
          'openid.claimed_id': ident,
          'openid.identity': ident,
-         'openid.op_endpoint': thisUrl,
+         'openid.op_endpoint': cfg_this_url,
          'openid.return_to': openid_return_to,
          'openid.response_nonce': rep_nonce,
          'openid.assoc_handle': assoc}
@@ -257,7 +276,7 @@ try:
                     old_assoc = assoc_handle)
 
             sys.stdout.write(html_header())
-            sys.stdout.write(head_html(title, thisUrl, buildPath(thisUrl, path)))
+            sys.stdout.write(head_html(cfg_title, cfg_this_url, buildPath(cfg_this_url, path)))
             sys.stdout.write("""\
             <body>
             <h2>Authentication failed.</h2><br />
@@ -270,14 +289,14 @@ try:
         # Do OpenId redirect
         elif len(form.keys()) == 0:
             sys.stdout.write(html_header())
-            sys.stdout.write(head_html(title, thisUrl, buildPath(thisUrl, path)))
+            sys.stdout.write(head_html(cfg_title, cfg_this_url, buildPath(cfg_this_url, path)))
 
         # Unkown
         else:
             log_important("Unknown key combination for wrapper.")
             log_all()
             sys.stdout.write(html_header())
-            sys.stdout.write(head_html(title))
+            sys.stdout.write(head_html(cfg_title))
 
         # Common
         sys.stdout.write("""\
@@ -297,7 +316,7 @@ try:
            form.has_key("openid.claimed_id") and form.has_key("openid.return_to"):
             uname = getPath(form['openid.claimed_id'].value)[-1]
             log_all()
-            redirect(buildPath(casUrl, ["login"]), 
+            redirect(buildPath(cfg_cas_url, ["login"]), 
                 {'service':  build_service_url(uname, form['openid.return_to'].value)})
 
         # Validate Indirect Response
@@ -309,7 +328,7 @@ try:
         # Landing Page.
         else:
             sys.stdout.write(html_header())
-            sys.stdout.write(head_html(title))
+            sys.stdout.write(head_html(cfg_title))
             sys.stdout.write("""\
             <body>
             <h2>OpenId-Cas-Bridge</h2>
@@ -322,7 +341,7 @@ try:
 except Exception as e:
     log_exception()
     sys.stdout.write(html_header())
-    sys.stdout.write(head_html(title))
+    sys.stdout.write(head_html(cfg_title))
     sys.stdout.write("""\
     <body>
     <h2>OpenId-Cas-Bridge</h2>
