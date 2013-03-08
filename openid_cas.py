@@ -27,7 +27,8 @@ cfg_nonce_constant = "BIRDS"
 
 ## Python libs
 import sys, os
-import time, string, base64
+import time, datetime
+import string, base64
 import traceback
 import cgi, cgitb; cgitb.enable()
 import urllib; import urllib2
@@ -159,10 +160,10 @@ def head_html(title, provider=None, localid=None):
 ### End Other Headers ###
 
 ### OpenId Protocol ###
-def response_nonce(nonce):
-    """OpenId response nonce."""
+def openid_generate_assertion_nonce(nonce):
+    """Generates an OpenId response nonce. The 'nonce' argument should be somewhat unique."""
     utctime = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    return utctime + cfg_nonce_constant + nonce
+    return utctime + cfg_nonce_constant + nonce + str(datetime.datetime.now().microsecond)
 
 def openid_signing_keys(d):
     """Returns the list of openid keys in the given object to sign."""
@@ -225,7 +226,7 @@ def redirect_openid_positive(openid_return_to, uname, nonce, old_assoc):
     """Performs an indirect OpenId possitve assertion on a given request."""
     ident = buildPath(cfg_this_url, [uname])
     key = str(ident) + cfg_assoc_encrypt_key
-    rep_nonce = response_nonce(nonce)
+    rep_nonce = openid_generate_assertion_nonce(nonce)
 
     b = Blowfish.new(key[:56], Blowfish.MODE_CBC, openid_return_to[:8])
     assoc = base64.b64encode(b.encrypt(generate_data(ident, rep_nonce)), "-_")
