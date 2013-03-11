@@ -93,40 +93,37 @@ def log(msg):
 ### End logging ###
 
 
-### HTTP Helpers ###
-def getPath(url=None):
-    """Returns the path folowing the cgi script as a list"""
+### URL Helpers ###
+def url_path_list(url=None):
+    """Returns the path folowing the domain as a list. Defaults to the current url."""
     if url is None:
         url = os.environ.get('PATH_INFO', '')
     list_path = url.split('/')
     return (list_path)[1:]
 
-def buildGet(query):
+def url_build_get_query(query):
     """Builds a get query string from a dictionary"""
-    queryString = ""
+    query_string = ""
     for k,v in query.items():
-        queryString += "&" + k + "=" + v 
-    return queryString[1:]
+        query_string += "&" + k + "=" + v 
+    return query_string[1:]
 
-def buildPath(root, path_list):
+def url_build_get(url, query):
+    """Builds a get url string from a root and dictionary"""
+    return url + \
+           ("?" if string.find(url, "?") == -1 else "&") + \
+           url_build_get_query(query)
+
+def url_build(root, path_list):
     """Builds a path string from a root and list"""
-    queryString = root[:]
-    queryString += ("/".join([''] + path_list))
-    return queryString
-### End HTTP Helpers ###
+    return root + ("/".join([''] + path_list))
+### End URL Helpers ###
 
 
 ### Final functions ###
-def final_redirect(location, query=None):
+def final_redirect(location, query={}):
     """Performs a redirect as the final action of the script. Redirects to the given location using the optional query dictionary."""
-    q = ""
-    if query is not None:
-        if string.find(location, "?") == -1:
-            q += "?"
-        else:
-            q += "&"
-        q += buildGet(query)
-    sys.stdout.write("Location: " + location + q + "\n\n");
+    sys.stdout.write("Location: " + url_build_get(location, query) + q + "\n\n");
     exit()
 
 def final_direct_response(data):
@@ -157,10 +154,10 @@ def html_header(title=cfg_title, header=""):
 ### HTML Helpers ###
 
 
-### Cas Helpers ###
+### CAS Helpers ###
 def cas_validate_ticket(ticket, service):
     """Validates against cas using a ticket, returns a dictionary of wid and username"""
-    address = buildPath(cfg_cas_url, ["serviceValidate"])
+    address = url_build(cfg_cas_url, ["serviceValidate"])
     values ={'service': service,
              'ticket': ticket}
     data = urllib.urlencode(values)
@@ -172,8 +169,8 @@ def cas_validate_ticket(ticket, service):
 
 def cas_build_service_url(uname, openid_return_to):
     """Builds the service link used by CAS for this page."""
-    return buildPath(cfg_this_url, [uname]) + "?" + buildGet({'openid.return_to': openid_return_to})
-### End Cas Helpers ###
+    return url_build_get(url_build(cfg_this_url, [uname]), {'openid.return_to': openid_return_to})
+### End CAS Helpers ###
 
 
 ### OpenId Protocol ###
@@ -256,7 +253,7 @@ def do_direct_validate(form):
 
 def redirect_openid_positive(openid_return_to, uname, nonce, old_assoc):
     """Performs an indirect OpenId possitve assertion on a given request."""
-    ident = buildPath(cfg_this_url, [uname])
+    ident = url_build(cfg_this_url, [uname])
     key = str(ident) + cfg_assoc_encrypt_key
     rep_nonce = openid_generate_assertion_nonce(nonce)
 
@@ -281,18 +278,18 @@ def redirect_openid_positive(openid_return_to, uname, nonce, old_assoc):
 
 ### The form data
 form = cgi.FieldStorage()
-path = getPath()
+current_path = url_path_list()
 
 try:
     #TODO: Ensure HTTPS
 ### Core logic
 
     # OpenId token wrapper
-    if len(path) == 1:
+    if len(current_path) == 1:
 
         # CAS request return / OpenId Indirect Positive Assertion
         if form.has_key('ticket') and form.has_key('openid.return_to'):
-            supposed_token = path[0]
+            supposed_token = current_path[0]
             log("Authenticating: %s" % (supposed_token,))
 
             openid_redirect_to = form['openid.return_to'].value
@@ -308,14 +305,14 @@ try:
                     nonce = cas_result['seed'],
                     old_assoc = assoc_handle)
 
-            html_header(header=openid_discovery_header(cfg_this_url, buildPath(cfg_this_url, path)))
+            html_header(header=openid_discovery_header(cfg_this_url, url_build(cfg_this_url, current_path)))
             final_html_display("""<br />
             <h3>Authentication failed.</h3><br />
             <p>%s is not in %s</p>""" % (supposed_token, cas_result))
 
         # Do OpenId redirect
         elif len(form.keys()) == 0:
-            html_header(header=openid_discovery_head(cfg_this_url, buildPath(cfg_this_url, path)))
+            html_header(header=openid_discovery_head(cfg_this_url, url_build(cfg_this_url, current_path)))
 
         # Unkown
         else:
@@ -324,7 +321,7 @@ try:
             html_header()
 
         # Common
-        final_html_display("<p>%s</p>" % (path[0],))
+        final_html_display("<p>%s</p>" % (current_path[0],))
 
     # OpenId provider
     else:
@@ -332,9 +329,9 @@ try:
         # CAS Redirect
         if form.has_key("openid.mode") and form["openid.mode"].value == "checkid_setup" and \
            form.has_key("openid.claimed_id") and form.has_key("openid.return_to"):
-            uname = getPath(form['openid.claimed_id'].value)[-1]
+            uname = url_path_list(form['openid.claimed_id'].value)[-1]
             log_all()
-            final_redirect(buildPath(cfg_cas_url, ["login"]), 
+            final_redirect(url_build(cfg_cas_url, ["login"]), 
                 {'service':  cas_build_service_url(uname, form['openid.return_to'].value)})
 
         # Validate Indirect Response
