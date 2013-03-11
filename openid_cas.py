@@ -147,18 +147,15 @@ def final_html_display(body = ""):
 ### End Final Functions ###
 
 
-### Headers/HTTP types ###
-def html_header():
-    return "Content-Type: text/html\n\n<html>"
-### End Headers/HTTP types ###
+### HTML Helpers ###
+def html_header(title=cfg_title, header=""):
+    sys.stdout.write("Content-Type: text/html\n\n")
+    sys.stdout.write("<html><head>")
+    sys.stdout.write("<title>%s</title>" % (title,))
+    sys.stdout.write("%s" % (title,))
+    sys.stdout.write("</head>")
+### HTML Helpers ###
 
-### OpenId Headers ###
-def openid_provider_head_html(provider):
-    return """<link rel="openid2.provider" href="%s">""" % (provider,)
-
-def openid_localid_head_html(localid):
-    return """<link rel="openid2.local_id" href="%s">""" % (localid,)
-### End OpenId Headers ###
 
 ### Cas Helpers ###
 def cas_validate_ticket(ticket, service):
@@ -178,15 +175,12 @@ def cas_build_service_url(uname, openid_return_to):
     return buildPath(cfg_this_url, [uname]) + "?" + buildGet({'openid.return_to': openid_return_to})
 ### End Cas Helpers ###
 
-### Other Headers ###
-def head_html(title, provider=None, localid=None):
-    return """<head><title>%s</title>%s%s</head>""" \
-        % (title,
-            openid_provider_head_html(provider) if provider is not None else "",
-            openid_localid_head_html(localid) if localid is not None else "")
-### End Other Headers ###
 
 ### OpenId Protocol ###
+def openid_discovery_header(provider, localid):
+    return ("""<link rel="openid2.provider" href="%s">""" % (provider,)) + "\n" + \
+           ("""<link rel="openid2.local_id" href="%s">""" % (localid,))
+                     
 def openid_generate_assertion_nonce(nonce):
     """Generates an OpenId response nonce. The 'nonce' argument should be somewhat unique."""
     utctime = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -234,7 +228,6 @@ def openid_test_assoc_handle(key, iv, data, handle):
     our_assoc_data = openid_truncate_assoc_handle_data(data)
     #test
     return (response_assoc_data == our_assoc_data)
-
 
 
 def do_direct_validate(form):
@@ -285,6 +278,7 @@ def redirect_openid_positive(openid_return_to, uname, nonce, old_assoc):
     final_redirect(openid_return_to, signed_d)
 ### End OpenId Protocol ###
 
+
 ### The form data
 form = cgi.FieldStorage()
 path = getPath()
@@ -314,23 +308,20 @@ try:
                     nonce = cas_result['seed'],
                     old_assoc = assoc_handle)
 
-            sys.stdout.write(html_header())
-            sys.stdout.write(head_html(cfg_title, cfg_this_url, buildPath(cfg_this_url, path)))
+            html_header(header=openid_discovery_header(cfg_this_url, buildPath(cfg_this_url, path)))
             final_html_display("""<br />
             <h3>Authentication failed.</h3><br />
             <p>%s is not in %s</p>""" % (supposed_token, cas_result))
 
         # Do OpenId redirect
         elif len(form.keys()) == 0:
-            sys.stdout.write(html_header())
-            sys.stdout.write(head_html(cfg_title, cfg_this_url, buildPath(cfg_this_url, path)))
+            html_header(header=openid_discovery_head(cfg_this_url, buildPath(cfg_this_url, path)))
 
         # Unkown
         else:
             log_important("Unknown key combination for wrapper.")
             log_all()
-            sys.stdout.write(html_header())
-            sys.stdout.write(head_html(cfg_title))
+            html_header()
 
         # Common
         final_html_display("<p>%s</p>" % (path[0],))
@@ -354,14 +345,11 @@ try:
 
         # Landing Page.
         else:
-            sys.stdout.write(html_header())
-            sys.stdout.write(head_html(cfg_title))
+            html_header()
             final_html_display()
 
 # Exception printing.
 except Exception as e:
     log_exception()
-    sys.stdout.write(html_header())
-    sys.stdout.write(head_html(cfg_title))
+    html_header()
     final_html_display("<p>Error!</p>")
-
