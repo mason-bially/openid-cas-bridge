@@ -20,6 +20,29 @@ cfg_assoc_encrypt_key = "TH3 BiRbS A5E T4STY!THIS~TIME 000F YeaR%"
 # A constant to add to the nonce.
 cfg_nonce_constant = "BIRDS"
 
+# Cas parse function. This is specific to the CAS you are bridging.
+#   * Expects a 'token' representing the user name token.
+#   * Expects a user semi-unique seed value as 'seed'.
+def cfg_parse_cas_response(response):
+    from xml.dom.minidom import parseString
+    def get_text(rnode):
+        """Extracts text from a minidom element"""
+        rc = []
+        for node in rnode.childNodes:
+            if node.nodeType == node.TEXT_NODE:
+                rc.append(node.data)
+        return ''.join(rc)
+    
+    tree = parseString(response)
+
+    uname_nodes = tree.getElementsByTagName("cas:user")
+    wid_nodes = tree.getElementsByTagName("cas:wid")
+    if len(uname_nodes) == 0 or len(wid_nodes) == 0:
+        return None
+
+    return {'token': get_text(uname_nodes[0]),
+            'seed': get_text(wid_nodes[0])[-4:]}
+
 ### End config ###
 
 
@@ -32,7 +55,6 @@ import string, base64
 import traceback
 import cgi, cgitb; cgitb.enable()
 import urllib; import urllib2
-from xml.dom.minidom import parseString
 
 ## PyCrypto libs
 from Crypto.Cipher import Blowfish
@@ -139,15 +161,7 @@ def openid_localid_head_html(localid):
 ### End OpenId Headers ###
 
 ### Cas Helpers ###
-def getText(rnode):
-    """Extracts text from a minidom element"""
-    rc = []
-    for node in rnode.childNodes:
-        if node.nodeType == node.TEXT_NODE:
-            rc.append(node.data)
-    return ''.join(rc)
-
-def CASvalidate(ticket, service):
+def cas_validate_ticket(ticket, service):
     """Validates against cas using a ticket, returns a dictionary of wid and username"""
     address = buildPath(cfg_cas_url, ["serviceValidate"])
     values ={'service': service,
@@ -156,17 +170,10 @@ def CASvalidate(ticket, service):
     req = urllib2.Request(address, data)
     response = urllib2.urlopen(req)
     the_page = response.read()
-    tree = parseString(the_page)
+    
+    return cfg_parse_cas_response(the_page)
 
-    uname_nodes = tree.getElementsByTagName("cas:user")
-    wid_nodes = tree.getElementsByTagName("cas:wid")
-    if len(uname_nodes) == 0 or len(wid_nodes) == 0:
-        return None
-
-    return {'uname': getText(uname_nodes[0]),
-            'wid': getText(wid_nodes[0])}
-
-def build_service_url(uname, openid_return_to):
+def cas_build_service_url(uname, openid_return_to):
     """Builds the service link used by CAS for this page."""
     return buildPath(cfg_this_url, [uname]) + "?" + buildGet({'openid.return_to': openid_return_to})
 ### End Cas Helpers ###
@@ -291,27 +298,27 @@ try:
 
         # CAS request return / OpenId Indirect Positive Assertion
         if form.has_key('ticket') and form.has_key('openid.return_to'):
-            supposed_uname = path[0]
-            log("Authenticating: %s" % (supposed_uname,))
+            supposed_token = path[0]
+            log("Authenticating: %s" % (supposed_token,))
 
             openid_redirect_to = form['openid.return_to'].value
-            service = build_service_url(supposed_uname, openid_redirect_to)
-            cas_result = CASvalidate(form['ticket'].value, service=service)
+            service = cas_build_service_url(supposed_token, openid_redirect_to)
+            cas_result = cas_validate_ticket(form['ticket'].value, service=service)
 
-            if (cas_result is not None) and cas_result['uname'] == supposed_uname:
+            if (cas_result is not None) and cas_result['token'] == supposed_token:
                 assoc_handle = form['openid.assoc_handle'].value if form.has_key('openid.assoc_handle') else None
                 log("Authenticated, redirecting to: '%s'" % (openid_redirect_to,))
                 #Send positive assertion!
                 redirect_openid_positive(openid_redirect_to,
-                    uname = supposed_uname,
-                    nonce = cas_result['wid'][-4:],
+                    uname = supposed_token,
+                    nonce = cas_result['seed'],
                     old_assoc = assoc_handle)
 
             sys.stdout.write(html_header())
             sys.stdout.write(head_html(cfg_title, cfg_this_url, buildPath(cfg_this_url, path)))
             final_html_display("""<br />
             <h3>Authentication failed.</h3><br />
-            <p>%s is not in %s</p>""" % (supposed_uname, cas_result))
+            <p>%s is not in %s</p>""" % (supposed_token, cas_result))
 
         # Do OpenId redirect
         elif len(form.keys()) == 0:
@@ -337,7 +344,7 @@ try:
             uname = getPath(form['openid.claimed_id'].value)[-1]
             log_all()
             final_redirect(buildPath(cfg_cas_url, ["login"]), 
-                {'service':  build_service_url(uname, form['openid.return_to'].value)})
+                {'service':  cas_build_service_url(uname, form['openid.return_to'].value)})
 
         # Validate Indirect Response
         elif form.has_key("openid.mode") and form["openid.mode"].value == "check_authentication":
